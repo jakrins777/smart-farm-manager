@@ -1,293 +1,335 @@
+// Developer: jakrins777 (rayzera)
 import { useState, useEffect } from 'react';
-import { 
-  getPests, deletePest, createPest, getPestSolutions, 
-  getProducts, createProduct, deleteProduct, getIngredients 
-} from './api';
-import './App.css';
+import axios from 'axios';
 
-function App() {
-  const [activeTab, setActiveTab] = useState('pests');
-  const [loading, setLoading] = useState(false);
+const API_URL = 'http://localhost:3000/api';
 
-  // --- State แมลง ---
-  const [pests, setPests] = useState([]);
-  const [selectedPest, setSelectedPest] = useState(null);
-  const [solutions, setSolutions] = useState([]);
-  const [newPestName, setNewPestName] = useState('');
-
-  // --- State สินค้า/ยา ---
-  const [products, setProducts] = useState([]);
-  const [ingredients, setIngredients] = useState([]); // เก็บรายชื่อสารเคมีไว้ทำ Dropdown
+export default function App() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   
-  // Form เพิ่มสินค้าใหม่
-  const [newProduct, setNewProduct] = useState({
-    p_name: '',
-    c_id: '', // เก็บ ID ของสารสามัญที่เลือก
-    formulation: '',
-    concentration: ''
-  });
+  // --- States ควบคุมระบบ ---
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null); // 🟢 เก็บข้อมูล User ที่ Login สำเร็จ
+  const [activeTab, setActiveTab] = useState('doctor'); 
+  
+  // --- States ข้อมูล ---
+  const [pests, setPests] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
+  const [moaData, setMoaData] = useState({ recent_history: [], recommendations: [] });
+  const [ingredients, setIngredients] = useState([]);
+  const [products, setProducts] = useState([]);
 
-  // Load Data ครั้งแรก
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // --- States ฟอร์ม ---
+  const [plotName, setPlotName] = useState('แปลงกะหล่ำ A');
+  const [selectedPest, setSelectedPest] = useState('');
+  const [selectedMoa, setSelectedMoa] = useState('');
+  const [selectedIngredient, setSelectedIngredient] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState('');
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      // โหลดข้อมูลทุกอย่างพร้อมกัน
-      const [pestData, productData, ingredientData] = await Promise.all([
-        getPests(),
-        getProducts(),
-        getIngredients()
-      ]);
-
-      setPests(Array.isArray(pestData) ? pestData : []);
-      setProducts(Array.isArray(productData) ? productData : []);
-      setIngredients(Array.isArray(ingredientData) ? ingredientData : []);
-
-    } catch (error) {
-      console.error("Error loading data:", error);
-      alert("ไม่สามารถเชื่อมต่อ Server ได้ (ตรวจสอบ Backend)");
-    } finally {
-      setLoading(false);
-    }
+  // ==========================================
+  // 🔐 ระบบ Login (เชื่อมต่อ Database จริง)
+  // ==========================================
+  const handleLogout = () => {
+    // 1. ล้างสถานะการล็อกอิน
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+    
+    // 2. ล้างข้อมูลที่ดึงมาจาก API ทั้งหมด (จุดสำคัญ!)
+    setPests([]);
+    setHistoryData([]);
+    setMoaData({ recent_history: [], recommendations: [] });
+    setIngredients([]);
+    setProducts([]);
+    
+    // 3. ล้างค่าที่ User เคยเลือกค้างไว้ในฟอร์ม
+    setSelectedPest('');
+    setSelectedMoa('');
+    setSelectedIngredient('');
+    setSelectedProduct('');
+    
+    // 4. ล้างค่าหน้าจอ Login
+    setUsername('');
+    setPassword('');
   };
 
-  // ================= ฟังก์ชันจัดการแมลง =================
-  const handleAddPest = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (!newPestName) return;
     try {
-      await createPest({ pest_name: newPestName, pest_type: 'insect' });
-      setNewPestName('');
-      fetchData();
-    } catch (err) { alert(err.message); }
-  };
+      const res = await axios.post(`${API_URL}/login`, { 
+        username: username, 
+        password: password 
+      });
 
-  const handleDeletePest = async (id) => {
-    if (confirm('ยืนยันลบแมลง?')) {
-      await deletePest(id);
-      fetchData();
-    }
-  };
-
-  const handleViewSolutions = async (pest) => {
-    setSelectedPest(pest);
-    try {
-      const data = await getPestSolutions(pest.pest_id);
-      setSolutions(Array.isArray(data) ? data : []);
-    } catch (err) { setSolutions([]); }
-  };
-
-  // ================= ฟังก์ชันจัดการสินค้า (CRUD ยา) =================
-  const handleAddProduct = async (e) => {
-    e.preventDefault();
-    // ตรวจสอบค่าว่าง
-    if (!newProduct.p_name || !newProduct.c_id) {
-      alert("กรุณากรอกชื่อการค้า และเลือกชื่อสามัญ");
-      return;
-    }
-
-    try {
-      await createProduct(newProduct);
-      // Reset Form
-      setNewProduct({ p_name: '', c_id: '', formulation: '', concentration: '' });
-      fetchData(); // โหลดข้อมูลใหม่
-      alert("เพิ่มสินค้าเรียบร้อย!");
+      if (res.data.success) {
+        setCurrentUser(res.data.user); // 🟢 เก็บ {user_id, username, role}
+        setIsLoggedIn(true);
+        fetchPests(); 
+      }
     } catch (err) {
-      alert("บันทึกไม่สำเร็จ: " + err.message);
+      if (err.response && err.response.data) {
+        alert('❌ ' + err.response.data.message);
+      } else {
+        alert('❌ เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
+      }
     }
   };
 
-  const handleDeleteProduct = async (id) => {
-    if (confirm('ยืนยันลบสินค้านี้?')) {
-      try {
-        await deleteProduct(id);
-        fetchData();
-      } catch (err) { alert(err.message); }
+  // ==========================================
+  // 🔗 ฟังก์ชันดึงข้อมูล (API Requests)
+  // ==========================================
+  const fetchPests = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/pests`);
+      setPests(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      // 🟢 ดึงประวัติเฉพาะของ User ที่ Login อยู่
+      const res = await axios.get(`${API_URL}/usage-history/${currentUser.user_id}`);
+      setHistoryData(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchMoaRecommendations = async (pestId) => {
+    try {
+      // 🟢 เช็คการดื้อยาโดยอิงจากประวัติของ User นั้นๆ
+      const res = await axios.get(
+        `${API_URL}/users/${currentUser.user_id}/plots/${plotName}/pests/${pestId}/moa-recommendations`
+      );
+      setMoaData(res.data);
+    } catch (err) {
+      console.error("Error loading MoA", err);
     }
   };
 
-  if (loading) return <div style={{textAlign:'center', padding:'50px'}}>⏳ กำลังโหลด...</div>;
+  // ==========================================
+  // 🖱️ Event Handlers
+  // ==========================================
+  const handlePestSelect = (e) => {
+    const pestId = e.target.value;
+    setSelectedPest(pestId);
+    setSelectedMoa(''); setSelectedIngredient(''); setSelectedProduct('');
+    setIngredients([]); setProducts([]);
+    if (pestId) fetchMoaRecommendations(pestId);
+  };
+
+  const handleMoaSelect = async (moaId, status) => {
+    if (status === 'BLOCKED') return; 
+    setSelectedMoa(moaId);
+    setSelectedIngredient(''); setSelectedProduct('');
+    try {
+      const res = await axios.get(`${API_URL}/moa/${moaId}/pests/${selectedPest}/ingredients`);
+      setIngredients(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleIngredientSelect = async (e) => {
+    const ingId = e.target.value;
+    setSelectedIngredient(ingId);
+    setSelectedProduct('');
+    try {
+      const res = await axios.get(`${API_URL}/ingredients/${ingId}/products`);
+      setProducts(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleSaveHistory = async () => {
+    if (!selectedProduct) return alert('กรุณาเลือกสินค้า');
+    try {
+      await axios.post(`${API_URL}/usage-history`, {
+        user_id: currentUser.user_id, // 🟢 ส่ง user_id ไปบันทึกด้วย
+        plot_name: plotName, 
+        pest_id: selectedPest, 
+        g_id: selectedMoa, 
+        c_id: selectedIngredient, 
+        p_id: selectedProduct
+      });
+      alert('✅ บันทึกประวัติสำเร็จ!');
+      setSelectedPest(''); setSelectedMoa(''); setSelectedIngredient(''); setSelectedProduct('');
+    } catch (err) { alert('❌ บันทึกไม่สำเร็จ'); }
+  };
+
+  // ==========================================
+  // 🎨 UI: Render Logic
+  // ==========================================
+  if (!isLoggedIn) {
+    return (
+      <div style={styles.loginBg}>
+        <div style={styles.loginCard}>
+          <h1 style={{ color: '#27ae60', textAlign: 'center' }}>🌱 Smart Farm</h1>
+          <p style={{ textAlign: 'center', color: '#7f8c8d' }}>เข้าสู่ระบบผู้จัดการฟาร์ม</p>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
+            <input 
+              type="text" 
+              placeholder="ชื่อผู้ใช้" 
+              required 
+              style={styles.input}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <input 
+              type="password" 
+              placeholder="รหัสผ่าน" 
+              required 
+              style={styles.input}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button type="submit" style={styles.btnPrimary}>เข้าสู่ระบบ</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto', fontFamily: 'Sarabun, sans-serif' }}>
-      <h1 style={{ textAlign: 'center', color: '#2c3e50' }}>🌱 Smart Farm Manager</h1>
-
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px', gap: '10px' }}>
-        <button onClick={() => setActiveTab('pests')} style={tabStyle(activeTab === 'pests', '#27ae60')}>🐛 จัดการแมลง</button>
-        <button onClick={() => setActiveTab('products')} style={tabStyle(activeTab === 'products', '#2980b9')}>💊 คลังสินค้า/ยา</button>
-      </div>
-
-      {/* ================= TAB 1: แมลง ================= */}
-      {activeTab === 'pests' && (
-        <div>
-          <div style={cardStyle}>
-            <h3>➕ เพิ่มแมลงใหม่</h3>
-            <form onSubmit={handleAddPest} style={{ display: 'flex', gap: '10px' }}>
-              <input type="text" placeholder="ชื่อแมลง" value={newPestName} onChange={(e) => setNewPestName(e.target.value)} style={inputStyle} />
-              <button type="submit" style={btnStyle('#27ae60')}>บันทึก</button>
-            </form>
-          </div>
-
-          {selectedPest && (
-            <div style={{...cardStyle, border: '2px solid #27ae60', backgroundColor: '#e8f6f3'}}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <h3 style={{ margin: 0, color: '#16a085' }}>ยาแนะนำสำหรับ: {selectedPest.pest_name}</h3>
-                <button onClick={() => setSelectedPest(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2em' }}>❌</button>
-              </div>
-              <hr style={{ borderColor: '#a3e4d7' }}/>
-              {solutions.length === 0 ? <p>ยังไม่มีข้อมูลยา</p> : (
-                <ul style={{ paddingLeft: '20px' }}>
-                  {solutions.map((sol, index) => (
-                    <li key={index} style={{ marginBottom: '8px' }}>
-                      <strong>{sol.c_name}</strong> (กลุ่ม {sol.irac_group}) 
-                      <span style={{ fontSize: '0.9em', color: '#666', marginLeft: '10px' }}>
-                         ตัวอย่าง: {sol.example_product || '-'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          <table style={tableStyle}>
-            <thead>
-              <tr style={{ backgroundColor: '#34495e', color: 'white' }}>
-                <th style={{ padding: '10px' }}>ชื่อแมลง</th>
-                <th style={{ padding: '10px' }}>ประเภท</th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>จัดการ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pests.map((pest) => (
-                <tr key={pest.pest_id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{ padding: '10px' }}>{pest.pest_name}</td>
-                  <td style={{ padding: '10px' }}>{pest.pest_type}</td>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <button onClick={() => handleViewSolutions(pest)} style={{...btnStyle('#f39c12'), marginRight:'5px'}}>🔍 ดูยา</button>
-                    <button onClick={() => handleDeletePest(pest.pest_id)} style={btnStyle('#c0392b')}>ลบ</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div style={styles.appBg}>
+      <nav style={styles.navbar}>
+        <div style={{ fontWeight: 'bold', fontSize: '20px', color: '#27ae60' }}>🌱 Smart Farm</div>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <span style={{fontSize: '14px', color: '#7f8c8d'}}>👤 {currentUser?.username}</span>
+          <button 
+            onClick={() => setActiveTab('doctor')} 
+            style={activeTab === 'doctor' ? styles.navBtnActive : styles.navBtn}
+          >💊 หมอพืช</button>
+          <button 
+            onClick={() => { setActiveTab('history'); fetchHistory(); }} 
+            style={activeTab === 'history' ? styles.navBtnActive : styles.navBtn}
+          >📋 ประวัติ</button>
+          <button onClick={handleLogout} style={{...styles.navBtn, color: '#e74c3c'}}>🚪 ออก</button>
         </div>
-      )}
+      </nav>
 
-      {/* ================= TAB 2: สินค้า (CRUD ยา) ================= */}
-      {activeTab === 'products' && (
-        <div>
-          {/* ฟอร์มเพิ่มสินค้า (CRUD: Create) */}
-          <div style={{...cardStyle, backgroundColor: '#d6eaf8', border: '1px solid #a9cce3'}}>
-            <h3 style={{color: '#2980b9'}}>➕ เพิ่มสินค้า/ยาใหม่</h3>
-            <form onSubmit={handleAddProduct} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              
-              {/* ชื่อการค้า */}
-              <div>
-                <label>ชื่อการค้า:</label>
-                <input 
-                  type="text" 
-                  placeholder="เช่น อะวอนท์"
-                  value={newProduct.p_name}
-                  onChange={(e) => setNewProduct({...newProduct, p_name: e.target.value})}
-                  style={inputStyle}
-                />
+      <div style={styles.container}>
+        {activeTab === 'doctor' && (
+          <div className="fade-in">
+            <h2 style={{ color: '#2c3e50', marginBottom: '5px' }}>วิเคราะห์การใช้ยา</h2>
+            <div style={styles.badge}>📍 แปลงปลูก: <strong>{plotName}</strong></div>
+
+            <div style={styles.card}>
+              <h3 style={styles.stepTitle}>1️⃣ ระบุศัตรูพืช</h3>
+              <select value={selectedPest} onChange={handlePestSelect} style={styles.input}>
+                <option value="">-- กรุณาเลือกแมลง --</option>
+                {pests.map(p => <option key={p.pest_id} value={p.pest_id}>{p.pest_name}</option>)}
+              </select>
+            </div>
+
+            {selectedPest && (
+              <div style={styles.card}>
+                <h3 style={styles.stepTitle}>2️⃣ เลือกกลุ่มยา (จัดการการดื้อยา)</h3>
+                {moaData.recent_history.length > 0 && (
+                  <div style={styles.alertWarning}>
+                    ⚠️ ประวัติ 3 ครั้งล่าสุดของคุณ: <strong>กลุ่ม {moaData.recent_history.join(', ')}</strong>
+                  </div>
+                )}
+                <div style={styles.grid}>
+                  {moaData.recommendations.map(moa => {
+                    const isBlocked = moa.status === 'BLOCKED';
+                    return (
+                      <div 
+                        key={moa.g_id} 
+                        onClick={() => handleMoaSelect(moa.g_id, moa.status)}
+                        style={{
+                          ...styles.moaCard,
+                          backgroundColor: isBlocked ? '#fdedec' : (selectedMoa === moa.g_id ? '#d5f5e3' : '#fff'),
+                          borderColor: isBlocked ? '#e74c3c' : (selectedMoa === moa.g_id ? '#27ae60' : '#bdc3c7'),
+                          cursor: isBlocked ? 'not-allowed' : 'pointer',
+                          opacity: isBlocked ? 0.6 : 1
+                        }}
+                      >
+                        <div style={{ fontWeight: 'bold', color: isBlocked ? '#c0392b' : '#27ae60' }}>
+                          {isBlocked ? '🔒 ห้ามใช้' : '✅ แนะนำ'}
+                        </div>
+                        <div style={{ fontSize: '20px', margin: '5px 0' }}>กลุ่ม {moa.g_id}</div>
+                        <div style={{ fontSize: '12px', color: '#7f8c8d' }}>{moa.g_name}</div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+            )}
 
-              {/* Dropdown เลือกสารสามัญ (สำคัญมาก!) */}
-              <div>
-                <label>ชื่อสามัญ (Active Ingredient):</label>
-                <select 
-                  value={newProduct.c_id}
-                  onChange={(e) => setNewProduct({...newProduct, c_id: e.target.value})}
-                  style={inputStyle}
-                >
-                  <option value="">-- กรุณาเลือกสาร --</option>
-                  {ingredients.map((ing) => (
-                    <option key={ing.c_id} value={ing.c_id}>
-                      {ing.c_name} (กลุ่ม {ing.g_name?.replace('Group ', '')})
-                    </option>
-                  ))}
+            {selectedMoa && (
+              <div style={styles.card}>
+                <h3 style={styles.stepTitle}>3️⃣ เลือกชื่อสามัญ</h3>
+                <select value={selectedIngredient} onChange={handleIngredientSelect} style={styles.input}>
+                  <option value="">-- เลือกสารเคมี --</option>
+                  {ingredients.map(ing => <option key={ing.c_id} value={ing.c_id}>{ing.c_name}</option>)}
                 </select>
               </div>
+            )}
 
-              {/* สูตร */}
-              <div>
-                <label>สูตร (Formulation):</label>
-                <input 
-                  type="text" 
-                  placeholder="เช่น SC, EC, SL"
-                  value={newProduct.formulation}
-                  onChange={(e) => setNewProduct({...newProduct, formulation: e.target.value})}
-                  style={inputStyle}
-                />
+            {selectedIngredient && (
+              <div style={styles.card}>
+                <h3 style={styles.stepTitle}>4️⃣ เลือกยี่ห้อสินค้า</h3>
+                <select value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)} style={styles.input}>
+                  <option value="">-- เลือกสินค้า --</option>
+                  {products.map(prod => <option key={prod.p_id} value={prod.p_id}>{prod.p_name}</option>)}
+                </select>
+                {selectedProduct && (
+                  <button onClick={handleSaveHistory} style={{...styles.btnPrimary, marginTop: '15px'}}>💾 บันทึกการพ่นยา</button>
+                )}
               </div>
-
-              {/* ความเข้มข้น */}
-              <div>
-                <label>ความเข้มข้น:</label>
-                <input 
-                  type="text" 
-                  placeholder="เช่น 1.8%"
-                  value={newProduct.concentration}
-                  onChange={(e) => setNewProduct({...newProduct, concentration: e.target.value})}
-                  style={inputStyle}
-                />
-              </div>
-
-              <div style={{ gridColumn: 'span 2', marginTop: '10px' }}>
-                <button type="submit" style={{...btnStyle('#2980b9'), width: '100%', padding: '10px'}}>บันทึกสินค้าใหม่</button>
-              </div>
-            </form>
+            )}
           </div>
+        )}
 
-          {/* ตารางสินค้า (CRUD: Read & Delete) */}
-          <table style={tableStyle}>
-            <thead>
-              <tr style={{ backgroundColor: '#2980b9', color: 'white' }}>
-                <th style={{ padding: '10px' }}>ชื่อการค้า</th>
-                <th style={{ padding: '10px' }}>ชื่อสามัญ</th>
-                <th style={{ padding: '10px' }}>สูตร</th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>กลุ่ม IRAC</th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>จัดการ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.length === 0 ? <tr><td colSpan="5" style={{textAlign:'center', padding:'20px'}}>ไม่พบสินค้า</td></tr> : 
-               products.map((prod) => (
-                <tr key={prod.p_id} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td style={{ padding: '10px', fontWeight: 'bold' }}>{prod.p_name}</td>
-                  <td style={{ padding: '10px' }}>{prod.c_name}</td>
-                  <td style={{ padding: '10px' }}>{prod.formulation || '-'}</td>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <span style={{ backgroundColor: '#f1c40f', padding: '3px 8px', borderRadius: '10px', fontSize: '0.9em', fontWeight: 'bold' }}>
-                      {prod.irac_group}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <button onClick={() => handleDeleteProduct(prod.p_id)} style={btnStyle('#e74c3c')}>ลบ</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {activeTab === 'history' && (
+          <div className="fade-in">
+            <h2 style={{ color: '#2c3e50', marginBottom: '15px' }}>📋 ประวัติการพ่นยาของคุณ</h2>
+            <div style={{ backgroundColor: '#fff', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#2c3e50', color: '#fff' }}>
+                    <th style={styles.th}>วันที่</th>
+                    <th style={styles.th}>แปลง</th>
+                    <th style={styles.th}>เป้าหมาย</th>
+                    <th style={styles.th}>กลุ่มยา</th>
+                    <th style={styles.th}>สินค้า</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyData.length === 0 ? <tr><td colSpan="5" style={{textAlign:'center', padding:'20px'}}>ยังไม่มีประวัติในบัญชีนี้</td></tr> :
+                   historyData.map((row) => (
+                    <tr key={row.history_id} style={{ borderBottom: '1px solid #ecf0f1' }}>
+                      <td style={styles.td}>{new Date(row.applied_date).toLocaleDateString('th-TH')}</td>
+                      <td style={styles.td}>{row.plot_name}</td>
+                      <td style={styles.td}>{row.pest_name}</td>
+                      <td style={styles.td}><span style={styles.groupBadge}>{row.g_id}</span></td>
+                      <td style={styles.td}><strong>{row.p_name}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-// --- CSS Styles แบบ Inline (จะได้ไม่ต้องแก้ไฟล์ CSS) ---
-const tabStyle = (isActive, color) => ({
-  backgroundColor: isActive ? color : '#bdc3c7',
-  color: 'white', padding: '10px 20px', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '16px'
-});
-const cardStyle = { backgroundColor: '#ecf0f1', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' };
-const inputStyle = { width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' };
-const btnStyle = (bg) => ({ backgroundColor: bg, color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' });
-const tableStyle = { width: '100%', borderCollapse: 'collapse', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' };
-
-export default App;
+// --- Styles (เหมือนเดิมเพื่อความสวยงาม) ---
+const styles = {
+  loginBg: { height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #a8e063 0%, #56ab2f 100%)', fontFamily: '"Sarabun", sans-serif' },
+  loginCard: { backgroundColor: '#fff', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', width: '100%', maxWidth: '350px' },
+  appBg: { backgroundColor: '#f4f7f6', minHeight: '100vh', fontFamily: '"Sarabun", sans-serif', paddingBottom: '40px' },
+  navbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: '15px 20px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', position: 'sticky', top: 0, zIndex: 100 },
+  navBtn: { background: 'none', border: 'none', fontSize: '16px', color: '#7f8c8d', cursor: 'pointer', padding: '5px 10px' },
+  navBtnActive: { background: 'none', border: 'none', fontSize: '16px', color: '#27ae60', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold', borderBottom: '2px solid #27ae60' },
+  container: { maxWidth: '800px', margin: '20px auto', padding: '0 15px' },
+  card: { backgroundColor: '#fff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.03)', marginBottom: '20px', borderLeft: '5px solid #2ecc71' },
+  stepTitle: { margin: '0 0 15px 0', color: '#34495e', fontSize: '18px' },
+  input: { width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #dcdde1', fontSize: '16px', outline: 'none', boxSizing: 'border-box' },
+  btnPrimary: { width: '100%', padding: '14px', backgroundColor: '#27ae60', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' },
+  badge: { backgroundColor: '#3498db', color: '#fff', padding: '5px 12px', borderRadius: '20px', display: 'inline-block', marginBottom: '20px', fontSize: '14px' },
+  alertWarning: { backgroundColor: '#fff3cd', color: '#856404', padding: '12px', borderRadius: '8px', marginBottom: '15px', borderLeft: '4px solid #ffeeba' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' },
+  moaCard: { padding: '15px', borderRadius: '10px', border: '2px solid', textAlign: 'center' },
+  th: { padding: '12px 15px', borderBottom: '2px solid #ecf0f1' },
+  td: { padding: '12px 15px', fontSize: '15px', color: '#2c3e50' },
+  groupBadge: { backgroundColor: '#f39c12', color: '#fff', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold', fontSize: '13px' }
+};

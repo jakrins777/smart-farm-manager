@@ -1,24 +1,59 @@
 const express = require('express');
 const cors = require('cors');
-const pool = require('./db'); // เรียกใช้ไฟล์ db.js ที่เราทำไว้
+const pool = require('./db'); // เรียกใช้ไฟล์ db.js ที่เชื่อมต่อ MySQL
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // --- Middleware ---
 app.use(cors());
-app.use(express.json()); // สำคัญ! ไว้อ่าน JSON ที่ส่งมา
+app.use(express.json());
 
-// --- 1. Root Route (Test) ---
+// --- Root Route (Test) ---
 app.get('/', (req, res) => {
     res.send('API is running...');
 });
 
-// ==========================================
-// 2. ส่วนจัดการสารเคมี (Active Ingredient)
-// ==========================================
+// =========================================================
+// 🔐 SECTION 0: ระบบ Login
+// =========================================================
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
 
-// GET: ดึงรายชื่อสารเคมี พร้อมชื่อกลุ่ม IRAC (Join Table)
+        // เช็คว่ากรอกข้อมูลมาครบไหม
+        if (!username || !password) {
+            return res.status(400).json({ message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+        }
+
+        // ค้นหาใน Database
+        const sql = 'SELECT user_id, username, role FROM users WHERE username = ? AND password = ?';
+        const [rows] = await pool.query(sql, [username, password]);
+
+        if (rows.length > 0) {
+            // เจอผู้ใช้ = ล็อคอินสำเร็จ (ส่งข้อมูลกลับไปแต่ไม่ส่งรหัสผ่าน)
+            res.json({ 
+                success: true, 
+                message: 'เข้าสู่ระบบสำเร็จ', 
+                user: rows[0] 
+            });
+        } else {
+            // ไม่เจอ = รหัสผิด
+            res.status(401).json({ 
+                success: false, 
+                message: 'ชื่อผู้ใช้ หรือ รหัสผ่านไม่ถูกต้อง!' 
+            });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =========================================================
+// 🟢 SECTION 1: CRUD จัดการสารเคมี (Active Ingredient)
+// =========================================================
+
+// ดึงรายชื่อสารเคมีทั้งหมด (พร้อมกลุ่ม IRAC)
 app.get('/api/ingredients', async (req, res) => {
     try {
         const sql = `
@@ -34,11 +69,9 @@ app.get('/api/ingredients', async (req, res) => {
     }
 });
 
-// POST: เพิ่มสารเคมีใหม่
 app.post('/api/ingredients', async (req, res) => {
     try {
         const { c_name, g_id, action_type } = req.body;
-        
         const [groups] = await pool.query('SELECT g_id FROM irac_moa_group WHERE g_id = ?', [g_id]);
         if (groups.length === 0) return res.status(400).json({ error: 'Invalid IRAC Group ID' });
 
@@ -50,15 +83,12 @@ app.post('/api/ingredients', async (req, res) => {
     }
 });
 
-// PUT: แก้ไขสารเคมี
 app.put('/api/ingredients/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { c_name, g_id, action_type } = req.body;
-
         const sql = 'UPDATE active_ingredient SET c_name = ?, g_id = ?, action_type = ? WHERE c_id = ?';
         const [result] = await pool.query(sql, [c_name, g_id, action_type, id]);
-
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Ingredient not found' });
         res.json({ message: 'Ingredient updated successfully' });
     } catch (err) {
@@ -66,30 +96,24 @@ app.put('/api/ingredients/:id', async (req, res) => {
     }
 });
 
-// DELETE: ลบสารเคมี
 app.delete('/api/ingredients/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        try {
-            const [result] = await pool.query('DELETE FROM active_ingredient WHERE c_id = ?', [id]);
-            if (result.affectedRows === 0) return res.status(404).json({ message: 'Ingredient not found' });
-            res.json({ message: 'Ingredient deleted successfully' });
-        } catch (deleteError) {
-            if (deleteError.code === 'ER_ROW_IS_REFERENCED_2') {
-                return res.status(400).json({ message: 'Cannot delete: used in products or pest control.' });
-            }
-            throw deleteError;
-        }
+        const [result] = await pool.query('DELETE FROM active_ingredient WHERE c_id = ?', [id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Ingredient not found' });
+        res.json({ message: 'Ingredient deleted successfully' });
     } catch (err) {
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(400).json({ message: 'Cannot delete: used in products or pest control.' });
+        }
         res.status(500).json({ error: err.message });
     }
 });
 
-// ==========================================
-// 3. ส่วนจัดการสินค้า (Product Trade)
-// ==========================================
+// =========================================================
+// 🔵 SECTION 2: CRUD จัดการสินค้าและยี่ห้อ (Product Trade)
+// =========================================================
 
-// GET: ดึงสินค้าทั้งหมด (Inventory)
 app.get('/api/products', async (req, res) => {
     try {
         const sql = `
@@ -106,7 +130,6 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// POST: เพิ่มสินค้าใหม่
 app.post('/api/products', async (req, res) => {
     const { p_name, c_id, formulation, concentration } = req.body; 
     try {
@@ -118,16 +141,12 @@ app.post('/api/products', async (req, res) => {
     }
 });
 
-// PUT: แก้ไขสินค้า
 app.put('/api/products/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { p_name, formulation, concentration } = req.body;
-        if (!p_name) return res.status(400).json({ message: 'Product name is required' });
-
         const sql = 'UPDATE product_trade SET p_name = ?, formulation = ?, concentration = ? WHERE p_id = ?';
         const [result] = await pool.query(sql, [p_name, formulation, concentration, id]);
-
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Product not found' });
         res.json({ message: 'Product updated successfully' });
     } catch (err) {
@@ -135,7 +154,6 @@ app.put('/api/products/:id', async (req, res) => {
     }
 });
 
-// DELETE: ลบสินค้า
 app.delete('/api/products/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -147,11 +165,10 @@ app.delete('/api/products/:id', async (req, res) => {
     }
 });
 
-// ==========================================
-// 4. ส่วนจัดการแมลง (Pests)
-// ==========================================
+// =========================================================
+// 🟡 SECTION 3: CRUD จัดการแมลง (Pests)
+// =========================================================
 
-// GET: ดึงข้อมูลแมลงทั้งหมด
 app.get('/api/pests', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM pest');
@@ -161,7 +178,6 @@ app.get('/api/pests', async (req, res) => {
     }
 });
 
-// GET: ดึงข้อมูลแมลงตาม ID
 app.get('/api/pests/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -173,7 +189,41 @@ app.get('/api/pests/:id', async (req, res) => {
     }
 });
 
-// GET: Pest Doctor (ดูยาตามแมลง)
+app.post('/api/pests', async (req, res) => {
+    try {
+        const { pest_name, pest_type, description } = req.body;
+        const sql = 'INSERT INTO pest (pest_name, pest_type, description) VALUES (?, ?, ?)';
+        const [result] = await pool.query(sql, [pest_name, pest_type, description]);
+        res.status(201).json({ message: 'Added successfully', id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/pests/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { pest_name, pest_type, description } = req.body;
+        const sql = 'UPDATE pest SET pest_name = ?, pest_type = ?, description = ? WHERE pest_id = ?';
+        const [result] = await pool.query(sql, [pest_name, pest_type, description, id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Pest not found' });
+        res.json({ message: 'Updated successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/pests/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.query('DELETE FROM pest WHERE pest_id = ?', [id]);
+        res.json({ message: 'Deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API แบบเก่า (ดึงยาทั้งหมดแบบไม่เช็คประวัติ) - เก็บไว้เผื่อใช้หน้าอื่น
 app.get('/api/pests/:id/solutions', async (req, res) => {
     const { id } = req.params;
     try {
@@ -193,46 +243,113 @@ app.get('/api/pests/:id/solutions', async (req, res) => {
     }
 });
 
-// POST: เพิ่มแมลง
-app.post('/api/pests', async (req, res) => {
+// =========================================================
+// 🌟 SECTION 4: SMART FARM DOCTOR (ระบบแนะนำยา + เช็คประวัติใหม่)
+// =========================================================
+
+// 4.1 ดึงกลุ่ม MoA ที่แนะนำและห้ามใช้ (เช็คประวัติ 3 ครั้งล่าสุด)
+app.get('/api/users/:user_id/plots/:plot_name/pests/:pest_id/moa-recommendations', async (req, res) => {
     try {
-        const { pest_name, pest_type, description } = req.body;
-        const sql = 'INSERT INTO pest (pest_name, pest_type, description) VALUES (?, ?, ?)';
-        const [result] = await pool.query(sql, [pest_name, pest_type, description]);
-        res.status(201).json({ message: 'Added successfully', id: result.insertId });
+        const { user_id, plot_name, pest_id } = req.params;
+
+        // 🟢 จุดสำคัญ: เพิ่ม "AND user_id = ?" เพื่อเช็คเฉพาะประวัติของผู้ใช้นั้นๆ
+        const [historyRows] = await pool.query(
+            'SELECT g_id FROM usage_history WHERE user_id = ? AND plot_name = ? AND pest_id = ? ORDER BY applied_date DESC LIMIT 3',
+            [user_id, plot_name, pest_id]
+        );
+        const usedGroups = historyRows.map(row => row.g_id.trim()); 
+
+        // ดึงกลุ่มยาทั้งหมดที่ฆ่าแมลงตัวนี้ได้ (ส่วนนี้ไม่ต้องกรอง user_id เพราะเป็นข้อมูลวิชาการ)
+        const sqlAllMoa = `
+            SELECT DISTINCT g.g_id, g.g_name, g.moa_summary 
+            FROM ingredient_pest_control ipc
+            JOIN active_ingredient ai ON ipc.c_id = ai.c_id
+            JOIN irac_moa_group g ON ai.g_id = g.g_id
+            WHERE ipc.pest_id = ?
+        `;
+        const [allMoaRows] = await pool.query(sqlAllMoa, [pest_id]);
+
+        const result = allMoaRows.map(moa => ({
+            g_id: moa.g_id.trim(),
+            g_name: moa.g_name,
+            moa_summary: moa.moa_summary,
+            status: usedGroups.includes(moa.g_id.trim()) ? 'BLOCKED' : 'RECOMMENDED'
+        }));
+
+        res.json({
+            recent_history: usedGroups, 
+            recommendations: result
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 4.2 ดึงรายชื่อสารสามัญ (Active Ingredient) ตามกลุ่ม MoA และ แมลงที่เลือก
+app.get('/api/moa/:g_id/pests/:pest_id/ingredients', async (req, res) => {
+    try {
+        const { g_id, pest_id } = req.params;
+        const sql = `
+            SELECT ai.c_id, ai.c_name, ipc.efficacy_level 
+            FROM active_ingredient ai
+            JOIN ingredient_pest_control ipc ON ai.c_id = ipc.c_id
+            WHERE ai.g_id = ? AND ipc.pest_id = ?
+            ORDER BY FIELD(ipc.efficacy_level, 'high', 'medium', 'low', 'unknown')
+        `;
+        const [rows] = await pool.query(sql, [g_id, pest_id]);
+        res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 4.3 ดึงรายชื่อสินค้า (Product) ตามสารสามัญที่เลือก
+app.get('/api/ingredients/:c_id/products', async (req, res) => {
+    try {
+        const { c_id } = req.params;
+        const [rows] = await pool.query(
+            'SELECT p_id, p_name, formulation, concentration FROM product_trade WHERE c_id = ? ORDER BY p_name ASC',
+            [c_id]
+        );
+        res.json(rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 4.4 บันทึกประวัติการใช้ยาลงตาราง usage_history
+app.post('/api/usage-history', async (req, res) => {
+    try {
+        const { user_id, plot_name, pest_id, g_id, c_id, p_id } = req.body;
+        // เพิ่ม user_id เข้าไปในคำสั่ง INSERT
+        const sql = 'INSERT INTO usage_history (user_id, plot_name, pest_id, g_id, c_id, p_id) VALUES (?, ?, ?, ?, ?, ?)';
+        const [result] = await pool.query(sql, [user_id, plot_name, pest_id, g_id, c_id, p_id]);
+        res.status(201).json({ message: 'บันทึกสำเร็จ', id: result.insertId });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// PUT: แก้ไขแมลง
-app.put('/api/pests/:id', async (req, res) => {
+app.get('/api/usage-history/:user_id', async (req, res) => {
     try {
-        const { id } = req.params;
-        const { pest_name, pest_type, description } = req.body;
-        const sql = 'UPDATE pest SET pest_name = ?, pest_type = ?, description = ? WHERE pest_id = ?';
-        const [result] = await pool.query(sql, [pest_name, pest_type, description, id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Pest not found' });
-        res.json({ message: 'Updated successfully' });
+        const { user_id } = req.params;
+        const sql = `
+            SELECT u.*, p.pest_name, a.c_name, pt.p_name
+            FROM usage_history u
+            JOIN pest p ON u.pest_id = p.pest_id
+            JOIN active_ingredient a ON u.c_id = a.c_id
+            JOIN product_trade pt ON u.p_id = pt.p_id
+            WHERE u.user_id = ? 
+            ORDER BY u.applied_date DESC`;
+        const [rows] = await pool.query(sql, [user_id]);
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-
-// DELETE: ลบแมลง
-app.delete('/api/pests/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await pool.query('DELETE FROM pest WHERE pest_id = ?', [id]);
-        res.json({ message: 'Deleted successfully' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ==========================================
-// START SERVER (ต้องอยู่ล่างสุดเสมอ!)
-// ==========================================
+// =========================================================
+// 🚀 START SERVER (บรรทัดสุดท้ายเสมอ)
+// =========================================================
 app.listen(port, () => {
     console.log(`🚀 Server running on port ${port}`);
 });
