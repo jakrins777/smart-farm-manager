@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:3000/api';
+const API_URL = 'https://smart-farm-manager.onrender.com/api';
 
 export default function App() {
   const [username, setUsername] = useState('');
