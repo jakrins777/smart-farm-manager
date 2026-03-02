@@ -306,11 +306,19 @@ app.get('/api/moa/:g_id/pests/:pest_id/ingredients', async (req, res) => {
 // 4.3 ดึงรายชื่อสินค้า (Product) ตามสารสามัญที่เลือก
 app.get('/api/ingredients/:c_id/products', async (req, res) => {
     try {
-        const { c_id } = req.params;
+        // 🟢 แปลง c_id เป็นตัวเลขก่อนนำไปใช้
+        const c_id = parseInt(req.params.c_id); 
+        
+        if (isNaN(c_id)) {
+            return res.status(400).json({ message: 'Invalid Ingredient ID' });
+        }
+
         const [rows] = await pool.query(
-            'SELECT p_id, p_name, formulation, concentration FROM product_trade WHERE c_id = ? ORDER BY p_name ASC',
-            [c_id]
-        );
+  'SELECT p_id, p_name, formulation FROM product_trade WHERE c_id = ? ORDER BY p_name ASC',
+  [c_id]
+);
+        
+        console.log(`Searching for products with c_id: ${c_id}, found: ${rows.length}`); // เช็คใน Terminal
         res.json(rows);
     } catch (error) {
         res.status(500).json({ error: error.message });

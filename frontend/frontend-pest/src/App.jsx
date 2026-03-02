@@ -10,7 +10,7 @@ export default function App() {
   
   // --- States ควบคุมระบบ ---
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null); // 🟢 เก็บข้อมูล User ที่ Login สำเร็จ
+  const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('doctor'); 
   
   // --- States ข้อมูล ---
@@ -28,50 +28,29 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState('');
 
   // ==========================================
-  // 🔐 ระบบ Login (เชื่อมต่อ Database จริง)
+  // 🔐 ระบบ Login & Logout
   // ==========================================
   const handleLogout = () => {
-    // 1. ล้างสถานะการล็อกอิน
     setIsLoggedIn(false);
     setCurrentUser(null);
-    
-    // 2. ล้างข้อมูลที่ดึงมาจาก API ทั้งหมด (จุดสำคัญ!)
-    setPests([]);
-    setHistoryData([]);
+    setPests([]); setHistoryData([]);
     setMoaData({ recent_history: [], recommendations: [] });
-    setIngredients([]);
-    setProducts([]);
-    
-    // 3. ล้างค่าที่ User เคยเลือกค้างไว้ในฟอร์ม
-    setSelectedPest('');
-    setSelectedMoa('');
-    setSelectedIngredient('');
-    setSelectedProduct('');
-    
-    // 4. ล้างค่าหน้าจอ Login
-    setUsername('');
-    setPassword('');
+    setIngredients([]); setProducts([]);
+    setSelectedPest(''); setSelectedMoa(''); setSelectedIngredient(''); setSelectedProduct('');
+    setUsername(''); setPassword('');
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post(`${API_URL}/login`, { 
-        username: username, 
-        password: password 
-      });
-
+      const res = await axios.post(`${API_URL}/login`, { username, password });
       if (res.data.success) {
-        setCurrentUser(res.data.user); // 🟢 เก็บ {user_id, username, role}
+        setCurrentUser(res.data.user);
         setIsLoggedIn(true);
         fetchPests(); 
       }
     } catch (err) {
-      if (err.response && err.response.data) {
-        alert('❌ ' + err.response.data.message);
-      } else {
-        alert('❌ เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
-      }
+      alert('❌ ' + (err.response?.data?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อ'));
     }
   };
 
@@ -87,7 +66,6 @@ export default function App() {
 
   const fetchHistory = async () => {
     try {
-      // 🟢 ดึงประวัติเฉพาะของ User ที่ Login อยู่
       const res = await axios.get(`${API_URL}/usage-history/${currentUser.user_id}`);
       setHistoryData(res.data);
     } catch (err) { console.error(err); }
@@ -95,18 +73,15 @@ export default function App() {
 
   const fetchMoaRecommendations = async (pestId) => {
     try {
-      // 🟢 เช็คการดื้อยาโดยอิงจากประวัติของ User นั้นๆ
       const res = await axios.get(
         `${API_URL}/users/${currentUser.user_id}/plots/${plotName}/pests/${pestId}/moa-recommendations`
       );
       setMoaData(res.data);
-    } catch (err) {
-      console.error("Error loading MoA", err);
-    }
+    } catch (err) { console.error("Error loading MoA", err); }
   };
 
   // ==========================================
-  // 🖱️ Event Handlers
+  // 🖱️ Event Handlers (จุดที่แก้ไขเรื่องข้อมูลไม่ขึ้น)
   // ==========================================
   const handlePestSelect = (e) => {
     const pestId = e.target.value;
@@ -120,6 +95,7 @@ export default function App() {
     if (status === 'BLOCKED') return; 
     setSelectedMoa(moaId);
     setSelectedIngredient(''); setSelectedProduct('');
+    setIngredients([]); setProducts([]);
     try {
       const res = await axios.get(`${API_URL}/moa/${moaId}/pests/${selectedPest}/ingredients`);
       setIngredients(res.data);
@@ -130,17 +106,35 @@ export default function App() {
     const ingId = e.target.value;
     setSelectedIngredient(ingId);
     setSelectedProduct('');
+    setProducts([]); 
+
+    if (!ingId) return;
+
     try {
       const res = await axios.get(`${API_URL}/ingredients/${ingId}/products`);
-      setProducts(res.data);
-    } catch (err) { console.error(err); }
+      
+      // 🟢 เพิ่มการตรวจสอบว่าข้อมูลที่ได้มาคืออะไร
+      console.log(`📡 Data received for ingredient ID ${ingId}:`, res.data);
+      
+      // 🟢 ถ้า API ตอบมาเป็น Array แน่นอน ค่อย Set
+      if(Array.isArray(res.data)) {
+         setProducts(res.data);
+      } else {
+         console.warn("⚠️ Data format is not an array:", res.data);
+         setProducts([]);
+      }
+
+    } catch (err) { 
+      console.error("Error fetching products:", err);
+      alert("ไม่สามารถดึงข้อมูลสินค้าได้");
+    }
   };
 
   const handleSaveHistory = async () => {
     if (!selectedProduct) return alert('กรุณาเลือกสินค้า');
     try {
       await axios.post(`${API_URL}/usage-history`, {
-        user_id: currentUser.user_id, // 🟢 ส่ง user_id ไปบันทึกด้วย
+        user_id: currentUser.user_id,
         plot_name: plotName, 
         pest_id: selectedPest, 
         g_id: selectedMoa, 
@@ -149,6 +143,7 @@ export default function App() {
       });
       alert('✅ บันทึกประวัติสำเร็จ!');
       setSelectedPest(''); setSelectedMoa(''); setSelectedIngredient(''); setSelectedProduct('');
+      setIngredients([]); setProducts([]);
     } catch (err) { alert('❌ บันทึกไม่สำเร็จ'); }
   };
 
@@ -262,13 +257,28 @@ export default function App() {
               </div>
             )}
 
-            {selectedIngredient && (
+     {selectedIngredient && (
               <div style={styles.card}>
                 <h3 style={styles.stepTitle}>4️⃣ เลือกยี่ห้อสินค้า</h3>
-                <select value={selectedProduct} onChange={(e) => setSelectedProduct(e.target.value)} style={styles.input}>
-                  <option value="">-- เลือกสินค้า --</option>
-                  {products.map(prod => <option key={prod.p_id} value={prod.p_id}>{prod.p_name}</option>)}
+                <select 
+                  value={selectedProduct} 
+                  onChange={(e) => setSelectedProduct(e.target.value)} 
+                  style={styles.input}
+                  // 🟢 เพิ่ม disabled ถ้ากำลังรอโหลดข้อมูล หรือไม่มีข้อมูล
+                  disabled={products.length === 0} 
+                >
+                  <option value="">
+                     {products.length === 0 ? "-- ไม่มีสินค้าที่ตรงกัน --" : "-- เลือกสินค้า --"}
+                  </option>
+                  
+                  {/* 🟢 Render เฉพาะเมื่อมีข้อมูลใน products Array */}
+                  {products.length > 0 && products.map(prod => (
+                    <option key={prod.p_id} value={prod.p_id}>
+                      {prod.p_name} {prod.formulation ? `(${prod.formulation})` : ''}
+                    </option>
+                  ))}
                 </select>
+
                 {selectedProduct && (
                   <button onClick={handleSaveHistory} style={{...styles.btnPrimary, marginTop: '15px'}}>💾 บันทึกการพ่นยา</button>
                 )}
